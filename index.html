@@ -47,13 +47,14 @@
       .right-col{order:999}
     }
 
-    /* Top tiles */
-    .tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
-    @media (max-width:700px){.tiles{grid-template-columns:repeat(1,1fr)}}
+    /* Top tiles - now 4 metrics: Total Voltage, Total Power, Leakage Voltage, Resistance */
+    .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+    @media (max-width:1100px){.tiles{grid-template-columns:repeat(2,1fr)}}
+    @media (max-width:520px){.tiles{grid-template-columns:repeat(1,1fr)}}
 
     .tile{background:linear-gradient(180deg, rgba(255,255,255,0.01), rgba(255,255,255,0.00));padding:14px;border-radius:12px;box-shadow:0 6px 18px rgba(0,0,0,0.45);border:1px solid rgba(255,255,255,0.03)}
     .tile h3{margin:0;font-size:13px;color:var(--muted)}
-    .tile .value{font-size:34px;font-weight:700;margin-top:8px}
+    .tile .value{font-size:32px;font-weight:700;margin-top:8px}
     .tile .sub{font-size:12px;color:var(--muted);margin-top:6px}
 
     .value.ok{color:var(--ok)}
@@ -65,9 +66,10 @@
     .flow-card{height:160px;display:flex;flex-direction:column;gap:10px}
     .flow-canvas{flex:1;background:var(--glass);border-radius:10px;padding:10px}
 
-    /* charts area */
-    .charts{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:6px}
-    @media (max-width:1000px){.charts{grid-template-columns:repeat(1,1fr)}}
+    /* charts area - now 4 charts: Voltage, Power, Leakage, Resistance */
+    .charts{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:6px}
+    @media (max-width:1300px){.charts{grid-template-columns:repeat(2,1fr)}}
+    @media (max-width:600px){.charts{grid-template-columns:repeat(1,1fr)}}
     .chart-wrap{height:220px;padding:12px;border-radius:10px;background:var(--card);border:1px solid rgba(255,255,255,0.02)}
     .chart-wrap canvas{width:100% ;height:100%}
 
@@ -103,9 +105,15 @@
     <section>
       <div class="tiles">
         <div class="tile">
-          <h3>Main Line Voltage (V)</h3>
-          <div id="mainTile" class="value ok">--</div>
+          <h3>Total Voltage (V)</h3>
+          <div id="voltageTile" class="value ok">--</div>
           <div class="sub">Nominal: <span id="nominal">230</span> V</div>
+        </div>
+
+        <div class="tile">
+          <h3>Total Power Consumption (kW)</h3>
+          <div id="powerTile" class="value ok">--</div>
+          <div class="sub">Rated capacity: <span id="powerThresh">10.0</span> kW</div>
         </div>
 
         <div class="tile">
@@ -124,8 +132,13 @@
       <!-- charts -->
       <div class="charts">
         <div class="chart-wrap tile">
-          <h3 style="margin:0;color:var(--muted);font-size:13px">Main Voltage</h3>
-          <canvas id="chartMain"></canvas>
+          <h3 style="margin:0;color:var(--muted);font-size:13px">Total Voltage</h3>
+          <canvas id="chartVoltage"></canvas>
+        </div>
+
+        <div class="chart-wrap tile">
+          <h3 style="margin:0;color:var(--muted);font-size:13px">Total Power Consumption</h3>
+          <canvas id="chartPower"></canvas>
         </div>
 
         <div class="chart-wrap tile">
@@ -196,6 +209,12 @@
             <input type="number" id="resInput" value="50" />
           </div>
 
+          <div class="row">
+            <label>Power capacity (kW)</label>
+            <input type="number" step="0.1" id="powerInput" value="10.0" />
+            <div class="spacer"></div>
+          </div>
+
           <div style="display:flex;gap:8px;justify-content:flex-end">
             <button class="ghost" id="btnApply">Apply</button>
           </div>
@@ -224,8 +243,10 @@
     // Fix threshold init
     let leakThreshVal = parseFloat(document.getElementById('leakInput').value) || 3.0;
     let resThreshVal = parseFloat(document.getElementById('resInput').value) || 50;
+    let powerThreshVal = parseFloat(document.getElementById('powerInput').value) || 10.0;
     document.getElementById('leakThresh').textContent = leakThreshVal.toFixed(1);
     document.getElementById('resThresh').textContent = resThreshVal;
+    document.getElementById('powerThresh').textContent = powerThreshVal.toFixed(1);
 
     // Charts with time-axis
     function makeChart(ctx, label, unit, suggested){
@@ -276,7 +297,8 @@
       });
     }
 
-    const chartMain = makeChart(document.getElementById('chartMain').getContext('2d'),'Main V','V',{min:180,max:260});
+    const chartVoltage = makeChart(document.getElementById('chartVoltage').getContext('2d'),'Total V','V',{min:180,max:260});
+    const chartPower = makeChart(document.getElementById('chartPower').getContext('2d'),'Power','kW',{min:0,max:15});
     const chartLeak = makeChart(document.getElementById('chartLeak').getContext('2d'),'Leak V','V',{min:0,max:10});
     const chartRes = makeChart(document.getElementById('chartRes').getContext('2d'),'Resistance','MΩ',{min:0,max:400});
 
@@ -335,30 +357,37 @@
     document.getElementById('btnApply').addEventListener('click', ()=>{
       leakThreshVal = parseFloat(document.getElementById('leakInput').value) || leakThreshVal;
       resThreshVal = parseFloat(document.getElementById('resInput').value) || resThreshVal;
+      powerThreshVal = parseFloat(document.getElementById('powerInput').value) || powerThreshVal;
       document.getElementById('leakThresh').textContent = leakThreshVal.toFixed(1);
       document.getElementById('resThresh').textContent = resThreshVal;
+      document.getElementById('powerThresh').textContent = powerThreshVal.toFixed(1);
     });
 
     // Simulation loop (demo). Replace with your input function feedData(obj)
+    // data shape: { voltage, power, leak, res }
     function feedData(data){
       if(paused) return;
       // update tiles
-      document.getElementById('mainTile').textContent = Number(data.main).toFixed(1);
+      document.getElementById('voltageTile').textContent = Number(data.voltage).toFixed(1);
+      document.getElementById('powerTile').textContent = Number(data.power).toFixed(2);
       document.getElementById('leakTile').textContent = Number(data.leak).toFixed(2);
       document.getElementById('resTile').textContent = Number(data.res).toFixed(1);
 
       // update classes
-      document.getElementById('mainTile').className = 'value ' + ((data.main < 210 || data.main > 250) ? 'danger' : 'ok');
+      document.getElementById('voltageTile').className = 'value ' + ((data.voltage < 210 || data.voltage > 250) ? 'danger' : 'ok');
+      document.getElementById('powerTile').className = 'value ' + ((data.power > powerThreshVal) ? 'danger':'ok');
       document.getElementById('leakTile').className = 'value ' + ((data.leak > leakThreshVal) ? 'danger':'ok');
       document.getElementById('resTile').className = 'value ' + ((data.res < resThreshVal) ? 'danger':'ok');
 
       // push charts
-      pushToChart(chartMain, data.main);
+      pushToChart(chartVoltage, data.voltage);
+      pushToChart(chartPower, data.power);
       pushToChart(chartLeak, data.leak);
       pushToChart(chartRes, data.res);
 
       // add logs
-      addLog('Main Voltage', data.main.toFixed(1), (data.main < 210 || data.main > 250));
+      addLog('Total Voltage', data.voltage.toFixed(1), (data.voltage < 210 || data.voltage > 250));
+      addLog('Total Power', data.power.toFixed(2), (data.power > powerThreshVal));
       addLog('Leakage Voltage', data.leak.toFixed(2), (data.leak > leakThreshVal));
       addLog('Resistance', data.res.toFixed(1), (data.res < resThreshVal));
     }
@@ -366,10 +395,11 @@
     // demo generator
     function randomGenerator(){
       const base = 230 + (Math.sin(Date.now()/60000)*4);
-      const main = base + (Math.random()*8-4);
+      const voltage = base + (Math.random()*8-4);
+      const power = 4 + Math.random()*7; // simulated kW draw, 4-11 kW
       const leak = Math.max(0,(Math.random()*5).toFixed(3));
       const res = 80 + Math.random()*220;
-      return {main, leak: Number(leak), res};
+      return {voltage, power: Number(power), leak: Number(leak), res};
     }
 
     // Start demo interval
@@ -410,8 +440,7 @@
     for(let i=0;i<6;i++){ feedData(randomGenerator()); }
 
     // expose feedData for integrators
-    window.feedData = feedData; // call window.feedData({main:230,leak:0.5,res:120}) from external script
+    window.feedData = feedData; // call window.feedData({voltage:230,power:6.5,leak:0.5,res:120}) from external script
   </script>
-<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"e3c1c9af36de41759418005494a48906","r":1,"server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 </body>
 </html>
