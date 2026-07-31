@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Dynamic Voltage Monitoring Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@2.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <style>
+    :root{
+      --bg: #071024;
+      --card: #071826;
+      --muted: #97a6b2;
+      --ok: #22c55e;
+      --warn: #f59e0b;
+      --danger: #ef4444;
+      --glass: rgba(255,255,255,0.03);
+      --accent: #06b6d4;
+      --gap: 14px;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+    }
+
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0;background:var(--bg);color:#e6eef6}
+
+    header{
+      padding:18px 22px;
+      display:flex;align-items:center;gap:12px;justify-content:space-between;
+      border-bottom:1px solid rgba(255,255,255,0.03);
+      background:linear-gradient(90deg, rgba(255,255,255,0.01), rgba(255,255,255,0.00));
+    }
+    header h1{font-size:18px;margin:0;font-weight:600}
+    header .controls{display:flex;gap:8px;align-items:center}
+    button.action{background:var(--accent);border:none;padding:8px 12px;border-radius:8px;color:#022;cursor:pointer;font-weight:600}
+    button.ghost{background:transparent;border:1px solid rgba(255,255,255,0.05);padding:8px 10px;border-radius:8px;color:var(--muted);cursor:pointer}
+
+    .app{
+      padding:18px;display:grid;gap:var(--gap);
+      grid-template-columns: 1fr 420px;
+      grid-auto-rows: min-content;
+      align-items:start;
+    }
+
+    /* Responsive */
+    @media (max-width:1000px){
+      .app{grid-template-columns:1fr}
+      .right-col{order:999}
+    }
+
+    /* Top tiles */
+    .tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+    @media (max-width:700px){.tiles{grid-template-columns:repeat(1,1fr)}}
+
+    .tile{background:linear-gradient(180deg, rgba(255,255,255,0.01), rgba(255,255,255,0.00));padding:14px;border-radius:12px;box-shadow:0 6px 18px rgba(0,0,0,0.45);border:1px solid rgba(255,255,255,0.03)}
+    .tile h3{margin:0;font-size:13px;color:var(--muted)}
+    .tile .value{font-size:34px;font-weight:700;margin-top:8px}
+    .tile .sub{font-size:12px;color:var(--muted);margin-top:6px}
+
+    .value.ok{color:var(--ok)}
+    .value.warn{color:var(--warn)}
+    .value.danger{color:var(--danger)}
+
+    /* Right column - flow + controls */
+    .right-col{display:flex;flex-direction:column;gap:12px}
+    .flow-card{height:160px;display:flex;flex-direction:column;gap:10px}
+    .flow-canvas{flex:1;background:var(--glass);border-radius:10px;padding:10px}
+
+    /* charts area */
+    .charts{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:6px}
+    @media (max-width:1000px){.charts{grid-template-columns:repeat(1,1fr)}}
+    .chart-wrap{height:220px;padding:12px;border-radius:10px;background:var(--card);border:1px solid rgba(255,255,255,0.02)}
+    .chart-wrap canvas{width:100% ;height:100%}
+
+    /* logging table */
+    .log-card{margin-top:6px;padding:12px;border-radius:10px;background:linear-gradient(180deg, rgba(255,255,255,0.01), rgba(255,255,255,0.00));border:1px solid rgba(255,255,255,0.03)}
+    .log-card h3{margin:0 0 8px 0;color:var(--muted);font-size:13px}
+
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th,td{padding:8px 6px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.03)}
+    th{color:var(--muted);font-size:12px}
+    td.param{font-weight:600}
+    td.warn{color:var(--danger);font-weight:700}
+
+    .log-container{max-height:340px;overflow:auto}
+
+    /* small helpers */
+    .row{display:flex;gap:8px;align-items:center}
+    .spacer{flex:1}
+    label{font-size:12px;color:var(--muted)}
+    input[type=number]{width:90px;padding:6px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>⚡ Dynamic Voltage Monitoring Dashboard</h1>
+    <div class="controls">
+      <button class="ghost" id="btnPause">Pause</button>
+      <button class="action" id="btnExport">Export CSV</button>
+    </div>
+  </header>
+
+  <main class="app">
+    <section>
+      <div class="tiles">
+        <div class="tile">
+          <h3>Main Line Voltage (V)</h3>
+          <div id="mainTile" class="value ok">--</div>
+          <div class="sub">Nominal: <span id="nominal">230</span> V</div>
+        </div>
+
+        <div class="tile">
+          <h3>Leakage Voltage (V)</h3>
+          <div id="leakTile" class="value ok">--</div>
+          <div class="sub">Threshold: <span id="leakThresh">3.0</span> V</div>
+        </div>
+
+        <div class="tile">
+          <h3>Insulation Resistance (MΩ)</h3>
+          <div id="resTile" class="value ok">--</div>
+          <div class="sub">Min acceptable: <span id="resThresh">50</span> MΩ</div>
+        </div>
+      </div>
+
+      <!-- charts -->
+      <div class="charts">
+        <div class="chart-wrap tile">
+          <h3 style="margin:0;color:var(--muted);font-size:13px">Main Voltage</h3>
+          <canvas id="chartMain"></canvas>
+        </div>
+
+        <div class="chart-wrap tile">
+          <h3 style="margin:0;color:var(--muted);font-size:13px">Leakage Voltage</h3>
+          <canvas id="chartLeak"></canvas>
+        </div>
+
+        <div class="chart-wrap tile">
+          <h3 style="margin:0;color:var(--muted);font-size:13px">Insulation Resistance</h3>
+          <canvas id="chartRes"></canvas>
+        </div>
+      </div>
+
+      <div class="log-card tile">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+          <h3>Live Data Log</h3>
+          <div class="spacer"></div>
+          <label>Max rows</label>
+          <input id="maxRows" type="number" value="200" min="10" />
+          <button class="ghost" id="btnClear">Clear</button>
+        </div>
+
+        <div class="log-container">
+          <table>
+            <thead>
+              <tr><th>SN</th><th>Timestamp</th><th>Parameter</th><th>Value</th><th>Out-of-Control</th></tr>
+            </thead>
+            <tbody id="logBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <aside class="right-col">
+      <div class="tile flow-card">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <h3 style="margin:0;color:var(--muted);font-size:13px">Voltage Flow Diagram</h3>
+          <div style="font-size:12px;color:var(--muted)">Live animation</div>
+        </div>
+        <div class="flow-canvas" id="flowWrap">
+          <svg id="flowSVG" viewBox="0 0 400 140" preserveAspectRatio="xMidYMid meet" style="width:100%;height:100%">
+            <!-- simple line with moving dot -->
+            <defs>
+              <linearGradient id="grad" x1="0" x2="1">
+                <stop offset="0%" stop-color="#06b6d4" stop-opacity="0.9" />
+                <stop offset="100%" stop-color="#22c55e" stop-opacity="0.9" />
+              </linearGradient>
+            </defs>
+            <rect x="8" y="10" width="384" height="120" rx="8" fill="rgba(0,0,0,0.04)"/>
+            <path id="flowPath" d="M30 70 C110 20, 290 20, 370 70" stroke="url(#grad)" stroke-width="6" fill="none" stroke-linecap="round"/>
+            <circle id="flowDot" r="6" fill="#fff" stroke="#06b6d4" stroke-width="2" />
+            <g id="nodes" fill="#94a3b8" font-size="12">
+              <text x="18" y="105">Source</text>
+              <text x="330" y="105">Load</text>
+            </g>
+          </svg>
+        </div>
+      </div>
+
+      <div class="tile">
+        <h3 style="margin:0;color:var(--muted);font-size:13px">Thresholds & Live Controls</h3>
+        <div style="margin-top:8px;display:flex;flex-direction:column;gap:8px">
+          <div class="row">
+            <label>Leakage V (max)</label>
+            <input type="number" step="0.1" id="leakInput" value="3.0" />
+            <div class="spacer"></div>
+            <label>Resistance (min)</label>
+            <input type="number" id="resInput" value="50" />
+          </div>
+
+          <div style="display:flex;gap:8px;justify-content:flex-end">
+            <button class="ghost" id="btnApply">Apply</button>
+          </div>
+
+          <div style="margin-top:6px;color:var(--muted);font-size:12px">Simulation source:
+            <select id="simSource">
+              <option value="random">Random (demo)</option>
+              <option value="websocket">WebSocket (ws://)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="tile">
+        <h3 style="margin:0;color:var(--muted);font-size:13px">Status</h3>
+        <div style="margin-top:10px;display:flex;flex-direction:column;gap:6px">
+          <div class="row"><div style="width:10px;height:10px;border-radius:50%;background:var(--ok)"></div><div style="margin-left:8px;color:var(--muted)">Connected</div></div>
+          <div class="row"><div style="width:10px;height:10px;border-radius:50%;background:var(--warn)"></div><div style="margin-left:8px;color:var(--muted)">Warnings</div></div>
+          <div class="row"><div style="width:10px;height:10px;border-radius:50%;background:var(--danger)"></div><div style="margin-left:8px;color:var(--muted)">Alarms</div></div>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <script>
+    // Fix threshold init
+    let leakThreshVal = parseFloat(document.getElementById('leakInput').value) || 3.0;
+    let resThreshVal = parseFloat(document.getElementById('resInput').value) || 50;
+    document.getElementById('leakThresh').textContent = leakThreshVal.toFixed(1);
+    document.getElementById('resThresh').textContent = resThreshVal;
+
+    // Charts with time-axis
+    function makeChart(ctx, label, unit, suggested){
+      return new Chart(ctx,{
+        type: 'line',
+        data:{
+          labels: [],
+          datasets: [{
+            label: label,
+            data: [],
+            tension: 0.3,
+            pointRadius: 0
+          }]
+        },
+        options:{
+          animation:false,
+          maintainAspectRatio:false,
+          plugins:{legend:{display:false}},
+          scales:{
+            x:{
+              type: 'time',
+              time: {
+                parser: 'HH:mm:ss',
+                tooltipFormat: 'HH:mm:ss',
+                unit: 'second',
+                displayFormats: {
+                  second: 'HH:mm:ss'
+                }
+              },
+              ticks: {
+                maxRotation: 0,
+                autoSkipPadding: 6
+              },
+              title: {
+                display: true,
+                text: 'Time'
+              }
+            },
+            y:{
+              suggestedMin:suggested.min,
+              suggestedMax:suggested.max,
+              ticks:{
+                callback: v=> v+ " "+unit
+              }
+            }
+          }
+        }
+      });
+    }
+
+    const chartMain = makeChart(document.getElementById('chartMain').getContext('2d'),'Main V','V',{min:180,max:260});
+    const chartLeak = makeChart(document.getElementById('chartLeak').getContext('2d'),'Leak V','V',{min:0,max:10});
+    const chartRes = makeChart(document.getElementById('chartRes').getContext('2d'),'Resistance','MΩ',{min:0,max:400});
+
+    function pushToChart(chart,val){
+      const timeLabel = new Date();
+      chart.data.labels.push(timeLabel);
+      chart.data.datasets[0].data.push(Number(val));
+      if(chart.data.datasets[0].data.length > 60){
+        chart.data.labels.shift();
+        chart.data.datasets[0].data.shift();
+      }
+      chart.update('none');
+    }
+
+    // Logging
+    let sn = 1;
+    let rows = [];
+    function addLog(param, value, outOfControl){
+      const ts = new Date().toLocaleString();
+      rows.unshift({sn: sn++, ts, param, value, outOfControl});
+      // trim
+      const max = Math.max(10, Number(document.getElementById('maxRows').value) || 200);
+      if(rows.length > max) rows = rows.slice(0, max);
+      renderLogs();
+    }
+
+    function renderLogs(){
+      const logBody = document.getElementById('logBody');
+      logBody.innerHTML = '';
+      for(const r of rows){
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${r.sn}</td><td>${r.ts}</td><td class="param">${r.param}</td><td>${r.value}</td><td class="${r.outOfControl? 'warn' : ''}">${r.outOfControl? 'YES' : 'NO'}</td>`;
+        logBody.appendChild(tr);
+      }
+    }
+
+    document.getElementById('btnClear').addEventListener('click', ()=>{rows=[];sn=1;renderLogs();});
+
+    // Pause / resume
+    let paused = false;
+    const btnPause = document.getElementById('btnPause');
+    btnPause.addEventListener('click', ()=>{paused = !paused; btnPause.textContent = paused? 'Resume' : 'Pause';});
+
+    // Export CSV
+    function exportCSV(){
+      const hdr = ['SN','Timestamp','Parameter','Value','OutOfControl'];
+      const csv = [hdr.join(',')].concat(rows.map(r=>[r.sn,`"${r.ts}"`,r.param,r.value,r.outOfControl? 'YES':'NO'].join(','))).join('\n');
+      const blob = new Blob([csv],{type:'text/csv'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href=url; a.download = 'voltage-log.csv'; document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    }
+    document.getElementById('btnExport').addEventListener('click', exportCSV);
+
+    // Apply thresholds
+    document.getElementById('btnApply').addEventListener('click', ()=>{
+      leakThreshVal = parseFloat(document.getElementById('leakInput').value) || leakThreshVal;
+      resThreshVal = parseFloat(document.getElementById('resInput').value) || resThreshVal;
+      document.getElementById('leakThresh').textContent = leakThreshVal.toFixed(1);
+      document.getElementById('resThresh').textContent = resThreshVal;
+    });
+
+    // Simulation loop (demo). Replace with your input function feedData(obj)
+    function feedData(data){
+      if(paused) return;
+      // update tiles
+      document.getElementById('mainTile').textContent = Number(data.main).toFixed(1);
+      document.getElementById('leakTile').textContent = Number(data.leak).toFixed(2);
+      document.getElementById('resTile').textContent = Number(data.res).toFixed(1);
+
+      // update classes
+      document.getElementById('mainTile').className = 'value ' + ((data.main < 210 || data.main > 250) ? 'danger' : 'ok');
+      document.getElementById('leakTile').className = 'value ' + ((data.leak > leakThreshVal) ? 'danger':'ok');
+      document.getElementById('resTile').className = 'value ' + ((data.res < resThreshVal) ? 'danger':'ok');
+
+      // push charts
+      pushToChart(chartMain, data.main);
+      pushToChart(chartLeak, data.leak);
+      pushToChart(chartRes, data.res);
+
+      // add logs
+      addLog('Main Voltage', data.main.toFixed(1), (data.main < 210 || data.main > 250));
+      addLog('Leakage Voltage', data.leak.toFixed(2), (data.leak > leakThreshVal));
+      addLog('Resistance', data.res.toFixed(1), (data.res < resThreshVal));
+    }
+
+    // demo generator
+    function randomGenerator(){
+      const base = 230 + (Math.sin(Date.now()/60000)*4);
+      const main = base + (Math.random()*8-4);
+      const leak = Math.max(0,(Math.random()*5).toFixed(3));
+      const res = 80 + Math.random()*220;
+      return {main, leak: Number(leak), res};
+    }
+
+    // Start demo interval
+    let demoInterval = setInterval(()=>{
+      if(document.getElementById('simSource').value === 'random')
+        feedData(randomGenerator());
+    }, 1500);
+
+    // allow switching source
+    document.getElementById('simSource').addEventListener('change', ()=>{
+      if(document.getElementById('simSource').value === 'random'){
+        if(!demoInterval) demoInterval = setInterval(()=>{ if(document.getElementById('simSource').value==='random') feedData(randomGenerator()); },1500);
+      } else {
+        clearInterval(demoInterval);
+        demoInterval = null;
+        // Websocket example here if needed
+      }
+    });
+
+    // Flow animation: move dot along path using getPointAtLength
+    (function animateFlow(){
+      const svg = document.getElementById('flowSVG');
+      const path = document.getElementById('flowPath');
+      const dot = document.getElementById('flowDot');
+      const len = path.getTotalLength();
+      let t = 0;
+      function step(){
+        t += 0.008; if(t>1) t=0;
+        const pos = path.getPointAtLength(len * t);
+        dot.setAttribute('cx', pos.x);
+        dot.setAttribute('cy', pos.y);
+        requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    })();
+
+    // initial quick fill
+    for(let i=0;i<6;i++){ feedData(randomGenerator()); }
+
+    // expose feedData for integrators
+    window.feedData = feedData; // call window.feedData({main:230,leak:0.5,res:120}) from external script
+  </script>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"e3c1c9af36de41759418005494a48906","r":1,"server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+</body>
+</html>
